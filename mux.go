@@ -67,6 +67,18 @@ type Router struct {
 
 	// configuration shared with `Route`
 	routeConf
+
+	// Configurable Handler to be used when there is some error.
+	DefaultErrorHandler http.Handler
+
+	// Configurable Handler to be used when there is some error.
+	ValidationErrorHandler http.Handler
+
+	// Configurable Handler to be used when there is some error.
+	AuthenticationErrorHandler http.Handler
+
+	// Configurable Handler to be used when there is some error.
+	AuthorizationErrorHandler http.Handler
 }
 
 // common route configuration shared between `Router` and `Route`
@@ -86,7 +98,7 @@ type routeConf struct {
 	regexp routeRegexpGroup
 
 	// List of matchers.
-	matchers []matcher
+	matchers []matcher //TODO - why a list of matchers ??
 
 	// The scheme used when building URLs.
 	buildScheme string
@@ -298,6 +310,57 @@ func (r *Router) Handle(path string, handler http.Handler) *Route {
 func (r *Router) HandleFunc(path string, f func(http.ResponseWriter,
 	*http.Request)) *Route {
 	return r.NewRoute().Path(path).HandlerFunc(f)
+}
+
+// HandleEntity registers all related handlers and middlewares for the given entity
+func (r *Router) HandleEntity(e *Entity) error {
+
+	return r.handleEntity(e, "")
+}
+
+func (r *Router) handleEntity(e *Entity, prefix string) error {
+	//TODO register all entity operation paths
+	for operation, handler := range e.operationHandlers {
+		path := operation.BuildPath(e.basePath, prefix)
+
+		r.NewRoute().Path(path).Methods(operation.HTTPMethod()).HandlerFunc(func(handler OperationHandler) func(w http.ResponseWriter, req *http.Request) {
+			return func(w http.ResponseWriter, req *http.Request) {
+				d := &RouteDetail{req: req}
+				isAuthenticated := e.Authenticationhandler.Authenticate(d)
+				if !isAuthenticated {
+					r.AuthenticationErrorHandler.ServeHTTP(w, req)
+					return
+				}
+				isAuthorized := e.AuthorizationHandler.Authorize(d)
+				if !isAuthorized {
+					r.AuthorizationErrorHandler.ServeHTTP(w, req)
+					return
+				}
+				isValidated := e.InputValidationHandler.Validate(d)
+				if !isValidated {
+					r.ValidationErrorHandler.ServeHTTP(w, req)
+					return
+				}
+				statusCode, response := handler.HandleOperation(d)
+				w.WriteHeader(statusCode)
+				_, err := w.Write(response)
+				if err != nil {
+					//give to error handler
+					r.DefaultErrorHandler.ServeHTTP(w, req)
+				}
+				return
+			}
+		}(handler))
+	}
+	//TODO register all entity children operation paths
+	for _, ce := range e.children {
+
+		err := r.handleEntity(ce, EntityOperationGet.BuildPath(e.basePath, prefix))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Headers registers a new route with a matcher for request header values.

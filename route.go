@@ -45,7 +45,7 @@ func (r *Route) Match(req *http.Request, match *RouteMatch) bool {
 
 	var matchErr error
 
-	// Match everything.
+	// Match everything.//TODO - check if the sequence of matchers will affect the end output.
 	for _, m := range r.matchers {
 		if matched := m.Match(req, match); !matched {
 			if _, ok := m.(methodMatcher); ok {
